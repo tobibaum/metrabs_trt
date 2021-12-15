@@ -2,23 +2,47 @@
 #include <stdio.h>
 #include <chrono>
 #include "tensorflow/c/c_api.h"
+
+//#include "tensorflow/core/public/session.h"
+//#include "tensorflow/core/framework/tensor.h"
+//#include "tensorflow/core/platform/env.h"
+
 #include <Eigen/Geometry>
 #include <opencv2/opencv.hpp>
 
 void NoOpDeallocator(void* data, size_t a, void* b) {}
-int main()
+int main(int argc, char** argv)
 {
+    if(argc < 2){
+        std::cout << "usage: ./metrabs <model-dir>" << std::endl;
+        return 0;
+    }
     // batchsize!
     int NumInputs = 1;
     int NumOutputs = 1;
+
+    //tensorflow::SessionOptions session_options_;
+    //tensorflow::RunOptions run_options_;
+    //tensorflow::SavedModelBundle model_;
+
+    //auto status = tensorflow::LoadSavedModel(session_options_,
+    //                                         run_options_,
+    //                                         path_to_model_,
+    //                                         {tensorflow::kSavedModelTagServe},
+    //                                         &model_);
+    //if (!status.ok()) {
+    //    std::cerr << "Failed to load model: " << status;
+    //return;
+    //}
 
     //********* Read model
     TF_Graph* Graph = TF_NewGraph();
     TF_Status* Status = TF_NewStatus();
     TF_SessionOptions* SessionOpts = TF_NewSessionOptions();
+    //SessionOpts->set_per_process_gpu_memory_fraction(0.333);
     TF_Buffer* RunOpts = NULL;
 
-    const char* saved_model_dir = "../rn18sig";
+    const char* saved_model_dir = argv[1];
     const char* tags = "serve";
 
     int ntags = 1;
@@ -30,7 +54,6 @@ int main()
         printf("%s",TF_Message(Status));
 
     //****** Get input tensor
-
     TF_Output* Input = (TF_Output*)malloc(sizeof(TF_Output) * NumInputs);
     TF_Output t0 = {TF_GraphOperationByName(Graph, "serving_default_image"), 0};
 
