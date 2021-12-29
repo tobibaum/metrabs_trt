@@ -37,6 +37,11 @@ int main(int argc, char** argv)
     int NumInputs = 1;
     int NumOutputs = 1;
 
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto last_time = start_time;
+    auto now = std::chrono::high_resolution_clock::now();
+    float durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+
     Trt* onnx_net = new Trt();
     onnx_net->CreateEngine("../mods/effnet.onnx", "../mods/effnet.plan", 1, 0);
     int inputBindIndex = 0;
@@ -53,10 +58,6 @@ int main(int argc, char** argv)
 
     //input = img_f32.data;
 
-    auto start_time = std::chrono::high_resolution_clock::now();
-    auto last_time = start_time;
-    auto now = std::chrono::high_resolution_clock::now();
-    float durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
 
     std::vector<float> fvec;
     for(int i=0; i<100;i++){
@@ -81,21 +82,7 @@ int main(int argc, char** argv)
     }
     std::cout << std::endl;
 
-    return 1;
-
-    //tensorflow::SessionOptions session_options_;
-    //tensorflow::RunOptions run_options_;
-    //tensorflow::SavedModelBundle model_;
-
-    //auto status = tensorflow::LoadSavedModel(session_options_,
-    //                                         run_options_,
-    //                                         path_to_model_,
-    //                                         {tensorflow::kSavedModelTagServe},
-    //                                         &model_);
-    //if (!status.ok()) {
-    //    std::cerr << "Failed to load model: " << status;
-    //return;
-    //}
+    //return 1;
 
     //********* Read model
     TF_Graph* Graph = TF_NewGraph();
@@ -116,13 +103,13 @@ int main(int argc, char** argv)
         printf("%s",TF_Message(Status));
 
     //****** Get input tensor
-    TF_Output* Input = (TF_Output*)malloc(sizeof(TF_Output) * NumInputs);
-    TF_Output t0 = {TF_GraphOperationByName(Graph, "serving_default_image"), 0};
+    TF_Output* Input = (TF_Output*)malloc(sizeof(TF_Output) * NumInputs );
+    TF_Output t0 = {TF_GraphOperationByName(Graph, "serving_default_feature"), 0};
 
     if(t0.oper == NULL)
-        printf("ERROR: Failed TF_GraphOperationByName serving_default_image\n");
+        printf("ERROR: Failed TF_GraphOperationByName serving_default_feature\n");
     else
-        printf("TF_GraphOperationByName serving_default_image is OK\n");
+        printf("TF_GraphOperationByName serving_default_feature is OK\n");
 
     Input[0] = t0;
 
@@ -145,13 +132,21 @@ int main(int argc, char** argv)
     int wd = image.rows;
     int ht = image.cols;
 
-
     for(int cnt=0; cnt<100; cnt++){
-        int ndims = 3;
-        int64_t dims[] = {wd, ht, 3};
-        unsigned char* data = image.data;
+        int ndims = 4;
+        //int64_t dims[] = {wd, ht, 3};
+        //unsigned char* data = image.data;
+        int64_t dims[] = {1, 8, 8, 1280};
+        //float* data = &output[0];
+        int ndata = 8*8*1280*4;
 
-        int ndata = wd*ht*3*4;
+        float data[ndata];
+        for(int i=0;i<ndata;i++){
+            //data[i] = .2f;
+            data[i] = output[i];
+        }
+
+        //int ndata = wd*ht*3*4;
         //TF_Tensor* int_tensor = TF_NewTensor(TF_UINT8, dims, ndims, data, ndata, &NoOpDeallocator, 0);
         TF_Tensor* int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
 
@@ -163,7 +158,9 @@ int main(int argc, char** argv)
         InputValues[0] = int_tensor;
 
         // Run the Session
+        printf("run sesh...\n");
         TF_SessionRun(Session, NULL, Input, InputValues, NumInputs, Output, OutputValues, NumOutputs, NULL, 0, NULL , Status);
+        printf("done\n");
 
         if(TF_GetCode(Status) == TF_OK)
             printf("Session is OK\n");
@@ -176,7 +173,6 @@ int main(int argc, char** argv)
         std::cout << durr << std::endl;
     }
 
-
     // Free memory
     TF_DeleteGraph(Graph);
     TF_DeleteSession(Session, Status);
@@ -186,7 +182,7 @@ int main(int argc, char** argv)
     void* buff = TF_TensorData(OutputValues[0]);
     float* offsets = (float*)buff;
 
-    Eigen::Map<Eigen::MatrixXf> res_mat(offsets, 3, 122);
+    Eigen::Map<Eigen::MatrixXf> res_mat(offsets, 2, 32);
     printf("Result Tensor :\n");
     std::cout << res_mat.transpose() << std::endl;
     //for(int i=0; i<100; i++){
