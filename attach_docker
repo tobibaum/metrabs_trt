@@ -1,0 +1,2 @@
+docker exec -it trt_dock bash
+

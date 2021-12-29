@@ -3,6 +3,8 @@
 #include <chrono>
 #include "tensorflow/c/c_api.h"
 
+#include "Trt.h"
+
 //#include "tensorflow/core/public/session.h"
 //#include "tensorflow/core/framework/tensor.h"
 //#include "tensorflow/core/platform/env.h"
@@ -10,16 +12,76 @@
 #include <Eigen/Geometry>
 #include <opencv2/opencv.hpp>
 
+std::vector<float> convert_mat_to_fvec(cv::Mat mat){
+    std::vector<float> array;
+    if (mat.isContinuous()) {
+        array.assign((float*)mat.data, (float*)mat.data + mat.total()*mat.channels());
+    } else {
+        for (int i = 0; i < mat.rows; ++i) {
+          array.insert(array.end(), mat.ptr<float>(i), mat.ptr<float>(i)+mat.cols*mat.channels());
+        }
+    }
+    return array;
+}
+
 void NoOpDeallocator(void* data, size_t a, void* b) {}
 int main(int argc, char** argv)
 {
-    if(argc < 2){
-        std::cout << "usage: ./metrabs <model-dir>" << std::endl;
+    if(argc < 3){
+        std::cout << "usage: ./metrabs <model-dir> <img-url>" << std::endl;
         return 0;
     }
+    cv::Mat image = cv::imread(argv[2]);
+
     // batchsize!
     int NumInputs = 1;
     int NumOutputs = 1;
+
+    Trt* onnx_net = new Trt();
+    onnx_net->CreateEngine("../mods/effnet.onnx", "../mods/effnet.plan", 1, 0);
+    int inputBindIndex = 0;
+    int outputBindIndex = 1;
+
+    cv::Mat img_f32;
+    cv::cvtColor(image, image, CV_BGR2RGB);
+    image.convertTo(img_f32, CV_32FC3);
+
+    img_f32 = img_f32/256.f;
+
+    //std::vector<float> input(786432/4);
+    std::vector<float> output(327680/4);
+
+    //input = img_f32.data;
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto last_time = start_time;
+    auto now = std::chrono::high_resolution_clock::now();
+    float durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+
+    std::vector<float> fvec;
+    for(int i=0; i<100;i++){
+        //onnx_net->CopyFromHostToDevice(input, inputBindIndex);
+        fvec = convert_mat_to_fvec(img_f32);
+        onnx_net->CopyFromHostToDevice(fvec, inputBindIndex);
+        onnx_net->Forward();
+        onnx_net->CopyFromDeviceToHost(output, outputBindIndex);
+
+        now = std::chrono::high_resolution_clock::now();
+        durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
+        last_time = now;
+        std::cout << durr << std::endl;
+    }
+
+    for(int i=0;i<100;i++){
+        std::cout << fvec[i] << " " ;
+    }
+    std::cout << std::endl;
+    for(int i=0;i<100;i++){
+        std::cout << output[i] << " " ;
+    }
+    std::cout << std::endl;
+
+    return 1;
 
     //tensorflow::SessionOptions session_options_;
     //tensorflow::RunOptions run_options_;
@@ -79,22 +141,19 @@ int main(int argc, char** argv)
     TF_Tensor** InputValues  = (TF_Tensor**)malloc(sizeof(TF_Tensor*)*NumInputs);
     TF_Tensor** OutputValues = (TF_Tensor**)malloc(sizeof(TF_Tensor*)*NumOutputs);
 
-    cv::Mat image = cv::imread("image.png");
+    cv::resize(image, image, cv::Size(256, 256));
     int wd = image.rows;
     int ht = image.cols;
 
-    auto start_time = std::chrono::high_resolution_clock::now();
-    auto last_time = start_time;
-    auto now = std::chrono::high_resolution_clock::now();
-    float durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
 
     for(int cnt=0; cnt<100; cnt++){
         int ndims = 3;
         int64_t dims[] = {wd, ht, 3};
         unsigned char* data = image.data;
 
-        int ndata = wd*ht*3;
-        TF_Tensor* int_tensor = TF_NewTensor(TF_UINT8, dims, ndims, data, ndata, &NoOpDeallocator, 0);
+        int ndata = wd*ht*3*4;
+        //TF_Tensor* int_tensor = TF_NewTensor(TF_UINT8, dims, ndims, data, ndata, &NoOpDeallocator, 0);
+        TF_Tensor* int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
 
         if (int_tensor != NULL)
             printf("TF_NewTensor is OK\n");
