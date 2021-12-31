@@ -6,21 +6,9 @@
 #include "Trt.h"
 
 #include <Eigen/Geometry>
-//#include <opencv2/opencv.hpp>
 
 #include "class_detector.h"
 
-std::vector<float> convert_mat_to_fvec(cv::Mat mat){
-    std::vector<float> array;
-    if (mat.isContinuous()) {
-        array.assign((float*)mat.data, (float*)mat.data + mat.total()*mat.channels());
-    } else {
-        for (int i = 0; i < mat.rows; ++i) {
-          array.insert(array.end(), mat.ptr<float>(i), mat.ptr<float>(i)+mat.cols*mat.channels());
-        }
-    }
-    return array;
-}
 
 void NoOpDeallocator(void* data, size_t a, void* b) {}
 
@@ -37,6 +25,9 @@ private:
     TF_Tensor** InputValues;
     TF_Tensor** OutputValues;
     TF_Session* Session;
+    int ndata;
+    int ndims;
+    int64_t* dims;
 
 public:
     ~TFModelLoader(){
@@ -47,7 +38,10 @@ public:
         TF_DeleteStatus(Status);
     }
 
-    TFModelLoader(const char* saved_model_dir, char const *feat_name){
+    TFModelLoader(const char* saved_model_dir, char const *feat_name, int _ndata, int _ndims, int64_t* _dims){
+        dims = _dims;
+        ndims = _ndims;
+        ndata = _ndata;
         //********* Read model
         Graph = TF_NewGraph();
         Status = TF_NewStatus();
@@ -94,7 +88,7 @@ public:
     }
 
     template<class T>
-    float* run(T* data, int ndata, int ndims, int64_t* dims){
+    float* run(T* data){
         TF_Tensor* int_tensor;
         if(std::is_same<T, float>::value){
             int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
@@ -125,108 +119,132 @@ public:
     }
 };
 
+class YoloDetector {
+private:
+    std::unique_ptr<Detector> detector;
+
+public:
+    YoloDetector(){
+        Config config_v4;
+        config_v4.net_type = YOLOV4;
+        config_v4.file_model_cfg = "/disk/apps/yolo-tensorrt/configs/yolov4.cfg";
+        config_v4.file_model_weights = "/disk/apps/yolo-tensorrt/configs/yolov4.weights";
+        config_v4.calibration_image_list_file_txt = "/disk/apps/yolo-tensorrt/configs/calibration_images.txt";
+        config_v4.inference_precison = FP16;
+        config_v4.detect_thresh = 0.5;
+        detector = std::unique_ptr<Detector>(new Detector());
+
+        detector->init(config_v4);
+    }
+
+    cv::Mat detect(cv::Mat image){
+        std::vector<BatchResult> batch_res;
+        std::vector<cv::Mat> batch_img;
+        batch_img.push_back(image);
+        detector->detect(batch_img, batch_res);
+
+        cv::Mat crop;
+
+        for (const auto &r : batch_res[0]){
+            if(r.id != 0)
+                continue;
+            // TODO: handle multiple detections!
+            std::cout << r.rect << std::endl;
+            crop = image(r.rect);
+        }
+        return crop;
+    }
+};
+
+class EffnetBBone {
+private:
+    Trt* onnx_net;
+    int inputBindIndex = 0;
+    int outputBindIndex = 1;
+
+    std::vector<float> convert_mat_to_fvec(cv::Mat mat){
+        std::vector<float> array;
+        if (mat.isContinuous()) {
+            array.assign((float*)mat.data, (float*)mat.data + mat.total()*mat.channels());
+        } else {
+            for (int i = 0; i < mat.rows; ++i) {
+              array.insert(array.end(), mat.ptr<float>(i), mat.ptr<float>(i)+mat.cols*mat.channels());
+            }
+        }
+        return array;
+    }
+
+public:
+    EffnetBBone(){
+        onnx_net = new Trt();
+        onnx_net->CreateEngine("../mods/effnet.onnx", "../mods/effnet.plan", 1, 0);
+    }
+
+    std::vector<float> run(cv::Mat crop){
+        cv::Mat img_f32;
+        crop.convertTo(img_f32, CV_32FC3);
+        img_f32 = img_f32/256.f;
+        std::vector<float> fvec = convert_mat_to_fvec(img_f32);
+        std::cout << fvec.size() << std::endl;
+
+        std::vector<float> output(327680/4);
+
+        onnx_net->CopyFromHostToDevice(fvec, inputBindIndex);
+        onnx_net->Forward();
+        std::cout << "forward good" << std::endl;
+        onnx_net->CopyFromDeviceToHost(output, outputBindIndex);
+
+        std::cout << "done" << std::endl;
+        return output;
+    }
+};
+
+
 int main(int argc, char** argv)
 {
     if(argc < 3){
         std::cout << "usage: ./metrabs <model-dir> <img-url>" << std::endl;
         return 0;
     }
-    cv::Mat image = cv::imread(argv[2]);
-    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
 
+    // timers
     auto start_time = std::chrono::high_resolution_clock::now();
     auto last_time = start_time;
     auto now = std::chrono::high_resolution_clock::now();
     float durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
 
-    int inputBindIndex = 0;
-    int outputBindIndex = 1;
-    std::vector<float> fvec;
-    
-    cv::Mat image_full = cv::imread("image.png");
+    // image from disk
+    cv::Mat image = cv::imread(argv[2]);
+    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
 
-    // ===
-    // yolo detection pre-built
-    // ===
-	Config config_v4;
-	config_v4.net_type = YOLOV4;
-	config_v4.file_model_cfg = "/disk/apps/yolo-tensorrt/configs/yolov4.cfg";
-	config_v4.file_model_weights = "/disk/apps/yolo-tensorrt/configs/yolov4.weights";
-	config_v4.calibration_image_list_file_txt = "/disk/apps/yolo-tensorrt/configs/calibration_images.txt";
-	config_v4.inference_precison = FP16;
-	config_v4.detect_thresh = 0.5;
+    // === INIT ===
+    YoloDetector yolo_det = YoloDetector();
 
-	std::unique_ptr<Detector> detector(new Detector());
-	detector->init(config_v4);
-	std::vector<BatchResult> batch_res;
+    EffnetBBone effnet = EffnetBBone();
 
+    int64_t dims[] = {1, 8, 8, 1280};
+    TFModelLoader tf_loader = TFModelLoader(argv[1], "serving_default_feature",
+            8*8*1280*4, 4, dims);
+
+    // === yolo detection pre-built ===
     cv::Mat crop;
 
     for(int j=0; j<100; j++){
-        std::vector<cv::Mat> batch_img;
-        batch_img.push_back(image_full);
-        //batch_img.push_back(image_full);
+        crop = yolo_det.detect(image);
 
-        detector->detect(batch_img, batch_res);
         now = std::chrono::high_resolution_clock::now();
         durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
         last_time = now;
         std::cout << durr << std::endl;
-        for (const auto &r : batch_res[0]){
-            if(r.id != 0)
-                continue;
-            std::cout << r.rect << std::endl;
-            crop = image_full(r.rect);
-        }
     }
+
     cv::resize(crop, crop, cv::Size(256, 256));
 
-    // ===
-    // detection tf
-    // ===
-    if(false){
-        TFModelLoader tf_loader_det = TFModelLoader("../mods/det", "serving_default_image");
+    // === effnet backbone ===
+    std::vector<float> output;
 
-        float* res;
-        for(int j=0; j<100; j++){
-            int wd = image_full.cols;
-            int ht = image_full.rows;
-            int64_t dims_det[] = {ht, wd, 3};
-
-            res = tf_loader_det.run(image_full.data, wd*ht*3, 3, dims_det);
-            now = std::chrono::high_resolution_clock::now();
-            durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
-            last_time = now;
-            std::cout << durr << std::endl;
-        }
-
-        for(int i=0; i < 5; i++){
-            std::cout << res[i] << " ";
-        }
-        std::cout << std::endl;
-    }
-
-    // ===
-    // effnet backbone
-    // ===
-    Trt* onnx_net = new Trt();
-    onnx_net->CreateEngine("../mods/effnet.onnx", "../mods/effnet.plan", 1, 0);
-    //int inputBindIndex = 0;
-    //int outputBindIndex = 1;
-
-    cv::Mat img_f32;
-    crop.convertTo(img_f32, CV_32FC3);
-    //cv::resize(image, image, cv::Size(256, 256));
-
-    img_f32 = img_f32/256.f;
-    std::vector<float> output(327680/4);
-
-    //std::vector<float> fvec;
     for(int i=0; i<100;i++){
-        fvec = convert_mat_to_fvec(img_f32);
-        onnx_net->CopyFromHostToDevice(fvec, inputBindIndex);
-        onnx_net->Forward();
-        onnx_net->CopyFromDeviceToHost(output, outputBindIndex);
+        output = effnet.run(crop);
 
         now = std::chrono::high_resolution_clock::now();
         durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
@@ -234,36 +252,16 @@ int main(int argc, char** argv)
         std::cout << durr << std::endl;
     }
 
-    for(int i=0;i<100;i++){
-        std::cout << fvec[i] << " " ;
-    }
-    std::cout << std::endl;
     for(int i=0;i<100;i++){
         std::cout << output[i] << " " ;
     }
     std::cout << std::endl;
 
-    // ===
-    // metrabs heads
-    // ===
-    TFModelLoader tf_loader = TFModelLoader(argv[1], "serving_default_feature");
-
+    // === metrabs heads ===
     float* offsets;
     for(int cnt=0; cnt<100; cnt++){
-
-        int ndims = 4;
-        int64_t dims[] = {1, 8, 8, 1280};
-        //float* data = &output[0];
-        int ndata = 8*8*1280*4;
-
-        float data[ndata];
-        for(int i=0;i<ndata;i++){
-            //data[i] = .2f;
-            data[i] = output[i];
-        }
-
-        // run inference
-        offsets = tf_loader.run(data, ndata, ndims, dims);
+        float* data = &output[0];
+        offsets = tf_loader.run(data);
 
         now = std::chrono::high_resolution_clock::now();
         durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
