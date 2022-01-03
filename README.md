@@ -1,4 +1,4 @@
-# Run Metrabs in C++ w/ Tensorrt at >=30fps
+# Run Metrabs in C++ w/ Tensorrt at >30fps
 
 This is a faster implementation of [Metrabs](https://github.com/isarandi/metrabs) under the following conditions:
 
