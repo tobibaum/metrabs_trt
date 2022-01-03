@@ -76,6 +76,8 @@ see https://github.com/zerollzeng/tiny-tensorrt.git. Convenient C++ wrapper to r
 ## Convert model
 the conversions happens in multiple steps inside and out of a docker container.
 
+the base models can be downloaded from the [metrabs-modelzoo](https://github.com/isarandi/metrabs/blob/master/docs/MODELS.md)
+
 ### 1. Split out backbone and metrab head
 run the notebook `convert_tensorrt.ipynb`. change the parameters in the first cell according to your setup and model you want to convert:
 ```
@@ -163,3 +165,4 @@ cd cpp
 ```
 ./metrabs <path-to-model-structure> <video-path>
 ```
+For now, the demo will show the cropped and resized frame with the resulting keypoints of 32 joints. I leave the reconstruction of the keypoint coordinates into the original image frame to the reader.
