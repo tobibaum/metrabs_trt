@@ -2,16 +2,16 @@
 #include <stdio.h>
 #include <chrono>
 #include "tensorflow/c/c_api.h"
-
-#include "Trt.h"
-
 #include <Eigen/Geometry>
 
+#include "Trt.h"
 #include "class_detector.h"
-
 
 void NoOpDeallocator(void* data, size_t a, void* b) {}
 
+/*
+ * https://github.com/AmirulOm/tensorflow_capi_sample/blob/master/main.c
+ */
 class TFModelLoader {
 private:
     // batchsize!
@@ -87,8 +87,7 @@ public:
 
     }
 
-    template<class T>
-    float* run(T* data){
+    template<class T> float* run(T* data){
         TF_Tensor* int_tensor;
         if(std::is_same<T, float>::value){
             int_tensor = TF_NewTensor(TF_FLOAT, dims, ndims, data, ndata, &NoOpDeallocator, 0);
@@ -96,21 +95,15 @@ public:
             int_tensor = TF_NewTensor(TF_UINT8, dims, ndims, data, ndata, &NoOpDeallocator, 0);
         }
 
-        if (int_tensor != NULL)
-            printf("TF_NewTensor is OK\n");
-        else
+        if (int_tensor == NULL)
             printf("ERROR: Failed TF_NewTensor\n");
 
         InputValues[0] = int_tensor;
 
         // Run the Session
-        printf("run sesh...\n");
         TF_SessionRun(Session, NULL, Input, InputValues, NumInputs, Output, OutputValues, NumOutputs, NULL, 0, NULL , Status);
-        printf("done\n");
 
-        if(TF_GetCode(Status) == TF_OK)
-            printf("Session is OK\n");
-        else
+        if(TF_GetCode(Status) != TF_OK)
             printf("%s",TF_Message(Status));
 
         void* buff = TF_TensorData(OutputValues[0]);
@@ -119,6 +112,9 @@ public:
     }
 };
 
+/*
+ * https://github.com/enazoe/yolo-tensorrt.git
+ */
 class YoloDetector {
 private:
     std::unique_ptr<Detector> detector;
@@ -132,30 +128,38 @@ public:
         config_v4.calibration_image_list_file_txt = "/disk/apps/yolo-tensorrt/configs/calibration_images.txt";
         config_v4.inference_precison = FP16;
         config_v4.detect_thresh = 0.5;
-        detector = std::unique_ptr<Detector>(new Detector());
 
+        detector = std::unique_ptr<Detector>(new Detector());
         detector->init(config_v4);
     }
 
-    cv::Mat detect(cv::Mat image){
+    cv::Mat detect(cv::Mat image, bool &result){
         std::vector<BatchResult> batch_res;
         std::vector<cv::Mat> batch_img;
         batch_img.push_back(image);
+
+        // inference (muted!)
+        std::cout.setstate(std::ios_base::failbit);
         detector->detect(batch_img, batch_res);
+        std::cout.clear();
 
         cv::Mat crop;
+        result = false;
 
         for (const auto &r : batch_res[0]){
             if(r.id != 0)
                 continue;
             // TODO: handle multiple detections!
-            std::cout << r.rect << std::endl;
             crop = image(r.rect);
+            result = true;
         }
         return crop;
     }
 };
 
+/*
+ * https://github.com/zerollzeng/tiny-tensorrt.git
+ */
 class EffnetBBone {
 private:
     Trt* onnx_net;
@@ -178,6 +182,7 @@ public:
     EffnetBBone(){
         onnx_net = new Trt();
         onnx_net->CreateEngine("../mods/effnet.onnx", "../mods/effnet.plan", 1, 0);
+        onnx_net->SetLogLevel((int)Severity::kINTERNAL_ERROR);
     }
 
     std::vector<float> run(cv::Mat crop){
@@ -185,16 +190,12 @@ public:
         crop.convertTo(img_f32, CV_32FC3);
         img_f32 = img_f32/256.f;
         std::vector<float> fvec = convert_mat_to_fvec(img_f32);
-        std::cout << fvec.size() << std::endl;
-
         std::vector<float> output(327680/4);
 
+        // inference
         onnx_net->CopyFromHostToDevice(fvec, inputBindIndex);
         onnx_net->Forward();
-        std::cout << "forward good" << std::endl;
         onnx_net->CopyFromDeviceToHost(output, outputBindIndex);
-
-        std::cout << "done" << std::endl;
         return output;
     }
 };
@@ -214,8 +215,8 @@ int main(int argc, char** argv)
     float durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
 
     // image from disk
-    cv::Mat image = cv::imread(argv[2]);
-    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+    //cv::Mat image = cv::imread(argv[2]);
+    //cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
 
     // === INIT ===
     YoloDetector yolo_det = YoloDetector();
@@ -226,51 +227,58 @@ int main(int argc, char** argv)
     TFModelLoader tf_loader = TFModelLoader(argv[1], "serving_default_feature",
             8*8*1280*4, 4, dims);
 
-    // === yolo detection pre-built ===
-    cv::Mat crop;
+    Eigen::MatrixXf res_mat;
 
-    for(int j=0; j<100; j++){
-        crop = yolo_det.detect(image);
+    //cv::VideoCapture cap(0);
+    cv::VideoCapture cap("cam_0_crop.mp4");
+    cv::Mat frame;
+    for(;;){
+        cap >> frame;
+        if (frame.empty())
+            break;
 
-        now = std::chrono::high_resolution_clock::now();
-        durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
-        last_time = now;
-        std::cout << durr << std::endl;
-    }
+        cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
 
-    cv::resize(crop, crop, cv::Size(256, 256));
+        // === yolo detection pre-built ===
+        bool result;
+        cv::Mat crop = yolo_det.detect(frame, result);
+        if(!result)
+            continue;
+        cv::resize(crop, crop, cv::Size(256, 256));
 
-    // === effnet backbone ===
-    std::vector<float> output;
+        // === effnet backbone ===
+        std::vector<float> output = effnet.run(crop);
 
-    for(int i=0; i<100;i++){
-        output = effnet.run(crop);
-
-        now = std::chrono::high_resolution_clock::now();
-        durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
-        last_time = now;
-        std::cout << durr << std::endl;
-    }
-
-    for(int i=0;i<100;i++){
-        std::cout << output[i] << " " ;
-    }
-    std::cout << std::endl;
-
-    // === metrabs heads ===
-    float* offsets;
-    for(int cnt=0; cnt<100; cnt++){
+        // === metrabs heads ===
         float* data = &output[0];
-        offsets = tf_loader.run(data);
+        float* offsets = tf_loader.run(data);
+        res_mat = Eigen::Map<Eigen::MatrixXf>(offsets, 2, 32);
 
+        // === timing ===
         now = std::chrono::high_resolution_clock::now();
         durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_time).count();
         last_time = now;
         std::cout << durr << std::endl;
+
+        // === viz ===
+        cv::namedWindow("image", cv::WINDOW_NORMAL);
+        cv::resizeWindow("image", 900, 500);
+
+        cv::Mat draw_mat;
+        cv::cvtColor(crop, draw_mat, cv::COLOR_RGB2BGR);
+        // draw dots!
+        for(int k=0; k<res_mat.cols(); k++){
+            cv::Point pt(int(res_mat(0, k)), int(res_mat(1, k)));
+            cv::circle(draw_mat, pt, 2, {255, 125, 0}, 2);
+        }
+        cv::imshow("image", draw_mat);
+
+		int32_t key = cv::waitKey(1);
+        if(key == 'q' || key == 27){
+            break;
+        }
     }
 
-    Eigen::Map<Eigen::MatrixXf> res_mat(offsets, 2, 32);
-    printf("Result Tensor :\n");
     std::cout << res_mat.transpose() << std::endl;
     return 0;
 }
