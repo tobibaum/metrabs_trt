@@ -223,8 +223,10 @@ int main(int argc, char** argv)
     EffnetBBone effnet = EffnetBBone(base_dir);
 
     int64_t dims[] = {1, 8, 8, 1280};
+    //int64_t dims[] = {1, 8, 8, 2048};
     TFModelLoader tf_loader = TFModelLoader(base_dir, "serving_default_feature",
             8*8*1280*4, 4, dims);
+            //8*8*2048*4, 4, dims);
 
     Eigen::MatrixXf res_mat;
 
