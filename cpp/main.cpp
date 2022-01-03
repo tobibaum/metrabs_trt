@@ -38,7 +38,7 @@ public:
         TF_DeleteStatus(Status);
     }
 
-    TFModelLoader(const char* saved_model_dir, char const *feat_name, int _ndata, int _ndims, int64_t* _dims){
+    TFModelLoader(std::string base_dir, char const *feat_name, int _ndata, int _ndims, int64_t* _dims){
         dims = _dims;
         ndims = _ndims;
         ndata = _ndata;
@@ -48,7 +48,9 @@ public:
         SessionOpts = TF_NewSessionOptions();
         TF_Buffer* RunOpts = NULL;
 
-        //const char* saved_model_dir = argv[1];
+        auto temp = base_dir + "/metrab_head";
+        const char* saved_model_dir = temp.c_str();
+        std::cout << "===metrab head loaded:=== " << saved_model_dir << std::endl;
         const char* tags = "serve";
 
         int ntags = 1;
@@ -120,12 +122,11 @@ private:
     std::unique_ptr<Detector> detector;
 
 public:
-    YoloDetector(){
+    YoloDetector(std::string base_dir){
         Config config_v4;
         config_v4.net_type = YOLOV4;
-        config_v4.file_model_cfg = "/disk/apps/yolo-tensorrt/configs/yolov4.cfg";
-        config_v4.file_model_weights = "/disk/apps/yolo-tensorrt/configs/yolov4.weights";
-        config_v4.calibration_image_list_file_txt = "/disk/apps/yolo-tensorrt/configs/calibration_images.txt";
+        config_v4.file_model_cfg = base_dir + "/configs/yolov4.cfg";
+        config_v4.file_model_weights = base_dir + "/configs/yolov4.weights";
         config_v4.inference_precison = FP16;
         config_v4.detect_thresh = 0.5;
 
@@ -179,10 +180,11 @@ private:
     }
 
 public:
-    EffnetBBone(){
+    EffnetBBone(std::string base_dir){
         onnx_net = new Trt();
-        onnx_net->CreateEngine("../mods/effnet.onnx", "../mods/effnet.plan", 1, 0);
+        onnx_net->CreateEngine(base_dir + "/bbone.onnx", base_dir + "/bbone.plan", 1, 0);
         onnx_net->SetLogLevel((int)Severity::kINTERNAL_ERROR);
+        //onnx_net->SetWorkpaceSize(2*1024*1024);
     }
 
     std::vector<float> run(cv::Mat crop){
@@ -204,9 +206,10 @@ public:
 int main(int argc, char** argv)
 {
     if(argc < 3){
-        std::cout << "usage: ./metrabs <model-dir> <img-url>" << std::endl;
+        std::cout << "usage: ./metrabs <model-base-dir> <video-file>" << std::endl;
         return 0;
     }
+    std::string base_dir = argv[1];
 
     // timers
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -214,23 +217,18 @@ int main(int argc, char** argv)
     auto now = std::chrono::high_resolution_clock::now();
     float durr = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
 
-    // image from disk
-    //cv::Mat image = cv::imread(argv[2]);
-    //cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-
     // === INIT ===
-    YoloDetector yolo_det = YoloDetector();
+    YoloDetector yolo_det = YoloDetector(base_dir);
 
-    EffnetBBone effnet = EffnetBBone();
+    EffnetBBone effnet = EffnetBBone(base_dir);
 
     int64_t dims[] = {1, 8, 8, 1280};
-    TFModelLoader tf_loader = TFModelLoader(argv[1], "serving_default_feature",
+    TFModelLoader tf_loader = TFModelLoader(base_dir, "serving_default_feature",
             8*8*1280*4, 4, dims);
 
     Eigen::MatrixXf res_mat;
 
-    //cv::VideoCapture cap(0);
-    cv::VideoCapture cap("cam_0_crop.mp4");
+    cv::VideoCapture cap(argv[2]);
     cv::Mat frame;
     for(;;){
         cap >> frame;
