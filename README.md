@@ -165,4 +165,10 @@ cd cpp
 ```
 ./metrabs <path-to-model-structure> <video-path>
 ```
-For now, the demo will show the cropped and resized frame with the resulting keypoints of 32 joints. I leave the reconstruction of the keypoint coordinates into the original image frame to the reader.
+
+#### caveats
+- For now, the demo will show the cropped and resized frame with the resulting keypoints of 32 joints. I leave the reconstruction of the keypoint coordinates into the original image frame to the reader.
+
+- I have only implemented the 2D parts of the model. in order to extract the full 3D model, you will have to modify the `metrabs_head` part in `convert_tensorrt.ipynb`, according to the code in [`metrabs/metrabs.py`](https://github.com/isarandi/metrabs/blob/master/src/models/metrabs.py#L33)
+
+- different model types have different bottleneck sizes before the metrabs header. this is currently clumsily implemented using a command line parameter: `./metrabs <some resnet model> <video> 2048`
