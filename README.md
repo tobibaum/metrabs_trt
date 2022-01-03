@@ -120,8 +120,46 @@ the notebook is hosted at localhost:888**9**
 run `onnx_trt_plan.ipynb` to convert 
 
 #### 4. symbolic link the configs from yolo-tensorrt installed above
+```
+cd mods/effnet-l
+ln -s <path to yolo-tensorrt>/configs
+```
 
+#### 5. final structure
+you should now have the following folders and files:
+```
+effnet-l/
+├── bbone
+│   ├── assets
+│   ├── saved_model.pb
+│   └── variables
+│       ├── variables.data-00000-of-00001
+│       └── variables.index
+├── bbone.onnx
+├── bbone.plan
+├── configs -> ../effnet-s/configs
+└── metrab_head
+    ├── assets
+    ├── saved_model.pb
+    └── variables
+        ├── variables.data-00000-of-00001
+        └── variables.index
+```
 
+------------------------
 
 ## Run Inference
-congrats if you made it this far!
+congrats if you made it this far! let me know what worked.
+
+The attached c++ code runs inference on a video and prints out the milliseconds spent on each frame.
+#### build the c++ code
+you will have to change some of the hardcode from `build.sh` to your local paths of the above installed stuff.
+```
+cd cpp
+./build.sh
+```
+
+#### run
+```
+./metrabs <path-to-model-structure> <video-path>
+```
