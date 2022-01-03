@@ -222,11 +222,14 @@ int main(int argc, char** argv)
 
     EffnetBBone effnet = EffnetBBone(base_dir);
 
-    int64_t dims[] = {1, 8, 8, 1280};
-    //int64_t dims[] = {1, 8, 8, 2048};
+    int dim=1280;
+    if(argc>3){
+        dim = atoi(argv[3]);
+        std::cout << "got bneck dim: " << dim << std::endl;
+    }
+    int64_t dims[] = {1, 8, 8, dim};
     TFModelLoader tf_loader = TFModelLoader(base_dir, "serving_default_feature",
-            8*8*1280*4, 4, dims);
-            //8*8*2048*4, 4, dims);
+            8*8*dim*4, 4, dims);
 
     Eigen::MatrixXf res_mat;
 
